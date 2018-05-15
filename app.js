@@ -5,6 +5,7 @@ var path = require('path');
 var server = require('socket.io');
 var pty = require('pty.js');
 var fs = require('fs');
+var cookie = require('cookie');
 
 var opts = require('optimist')
     .options({
@@ -78,6 +79,32 @@ var app = express();
 app.get('/wetty/ssh/:user', function(req, res) {
     res.sendfile(__dirname + '/public/wetty/index.html');
 });
+
+
+app.use(express.cookieParser());
+// set a cookie
+app.use(function (req, res, next) {
+  // check if client sent cookie
+  var cookie = req.cookies.cookieName;
+  if (cookie === undefined)
+  {
+    // no: set a new cookie
+    var randomNumber=Math.random().toString();
+    randomNumber=randomNumber.substring(2,randomNumber.length);
+    res.cookie('cookieName',randomNumber, { maxAge: 900000, httpOnly: true });
+    console.log('cookie created successfully');
+    console.log(res.cookies);
+  }
+  else
+  {
+    // yes, cookie  already present
+    console.log('cookie exists', cookie);
+    console.log(req.cookies);
+  }
+  next(); // <-- important!
+});
+
+
 app.use('/', express.static(path.join(__dirname, 'public')));
 
 if (runhttps) {
