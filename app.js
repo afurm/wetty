@@ -1,10 +1,12 @@
 var express = require('express');
+var bodyParser = require('body-parser');
 var http = require('http');
 var https = require('https');
 var path = require('path');
 var server = require('socket.io');
 var pty = require('pty.js');
 var fs = require('fs');
+var tmp = require('tmp');
 
 var opts = require('optimist')
     .options({
@@ -42,7 +44,7 @@ var opts = require('optimist')
 var runhttps = false;
 var sshport = 22;
 var sshhost = 'localhost';
-var sshauth = 'password,keyboard-interactive';
+var sshauth = 'password,keyboard-interactive,publickey';
 var globalsshuser = '';
 
 if (opts.sshport) {
@@ -75,8 +77,16 @@ process.on('uncaughtException', function(e) {
 var httpserv;
 
 var app = express();
-app.get('/wetty/ssh/:user', function(req, res) {
-    res.sendfile(__dirname + '/public/wetty/index.html');
+var sshuser = '';
+var sshkey = '';
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
+app.post('/session', function(req, res) {
+  //  curl --data "sshuser=user&shhost=host" http://localhost:3000/session
+  sshuser = req.body.sshuser + '@';
+  sshhost = req.body.sshhost;
+  sshkey = req.body.sshkey;
+  res.json(req.body);
 });
 app.use('/', express.static(path.join(__dirname, 'public')));
 
@@ -92,32 +102,27 @@ if (runhttps) {
 
 var io = server(httpserv,{path: '/wetty/socket.io'});
 io.on('connection', function(socket){
-    var sshuser = '';
+    // Create tempFile
+    var tmpobj = tmp.fileSync();
+    fs.writeFile(tmpobj.name, sshkey, function (err) {
+      if (err) throw err;
+    });
+
     var request = socket.request;
     console.log((new Date()) + ' Connection accepted.');
-    if (match = request.headers.referer.match('/wetty/ssh/.+$')) {
-        sshuser = match[0].replace('/wetty/ssh/', '') + '@';
-    } else if (globalsshuser) {
-        sshuser = globalsshuser + '@';
-    }
 
     var term;
-    if (process.getuid() == 0) {
-        term = pty.spawn('/usr/bin/env', ['login'], {
-            name: 'xterm-256color',
-            cols: 80,
-            rows: 30
-        });
-    } else {
-        term = pty.spawn('ssh', [sshuser + sshhost, '-p', sshport, '-o', 'PreferredAuthentications=' + sshauth], {
-            name: 'xterm-256color',
-            cols: 80,
-            rows: 30
-        });
-    }
+
+    term = pty.spawn('ssh', [sshuser + sshhost, '-p', sshport, '-i', tmpobj.name, '-o', 'PreferredAuthentications=' + sshauth], {
+        name: 'xterm-256color',
+        cols: 80,
+        rows: 30
+    });
+
     console.log((new Date()) + " PID=" + term.pid + " STARTED on behalf of user=" + sshuser)
     term.on('data', function(data) {
         socket.emit('output', data);
+        tmpobj.removeCallback();
     });
     term.on('exit', function(code) {
         console.log((new Date()) + " PID=" + term.pid + " ENDED")
